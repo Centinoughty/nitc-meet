@@ -10,7 +10,7 @@ export default function Navbar() {
     const getUser = async () => {
       try {
         const response = await axios.get(
-          `${process.env.NEXT_PUBLIC_BACKEND_URL}/auth/login/success`,
+          `${process.env.NEXT_PUBLIC_BACKEND}/auth/login/success`,
           { withCredentials: true }
         );
 
@@ -36,7 +36,7 @@ export default function Navbar() {
               <>
                 <div>{userdata?.displayName}</div>
                 <Link
-                  href={`${process.env.NEXT_PUBLIC_BACKEND_URL}/auth/logout`}
+                  href={`${process.env.NEXT_PUBLIC_BACKEND}/auth/logout`}
                   className=""
                 >
                   Log Out
