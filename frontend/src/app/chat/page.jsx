@@ -9,103 +9,164 @@ export default function Home() {
   const [messages, setMessages] = useState([]);
   const [localSocket, setLocalSocket] = useState(null);
   const [remoteSocket, setRemoteSocket] = useState(null);
-  const [peer, setPeer] = useState(null);
   const [type, setType] = useState(null);
-  const [roomId, setRoomId] = useState(null);
+  const [roomid, setRoomid] = useState(null);
 
   const inputRef = useRef();
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
+  const peerRef = useRef(null);
 
   useEffect(() => {
-    const socket = io(process.env.NEXT_PUBLIC_BACKEND);
+    const socket = io(process.env.NEXT_PUBLIC_BACKEND, {
+      transports: ["websocket"], // Ensure WebSocket transport is used
+    });
     setLocalSocket(socket);
 
-    socket.on("disconnected", () => {
+    const handleDisconnected = () => {
       console.log("Disconnected");
-    });
+    };
 
-    socket.emit("start", (person) => {
+    const handleStart = (person) => {
       setType(person);
-    });
+    };
 
-    socket.on("remote-socket", (id) => {
+    const handleRemoteSocket = async (id) => {
       setRemoteSocket(id);
       setIsWaiting(false);
-      const connectedUser = new RTCPeerConnection();
-      setPeer(connectedUser);
 
-      connectedUser.onnegotiationneeded = async () => {
-        if (type === "p1") {
-          const offer = await connectedUser.createOffer();
-          await connectedUser.setLocalDescription(offer);
-          socket.emit("sdp:send", { sdp: connectedUser.localDescription });
+      const peer = new RTCPeerConnection({
+        iceServers: [
+          { urls: "stun:stun.l.google.com:19302" }, // Public STUN server by Google
+          // {
+          //   urls: "turn:your-turn-server.com:3478", // Replace with your TURN server
+          //   username: "your-username",
+          //   credential: "your-password",
+          // },
+        ],
+      });
+      peerRef.current = peer;
+
+      await startMediaCapture(peer); // Ensure media capture starts before negotiation
+
+      peer.onnegotiationneeded = async () => {
+        try {
+          if (type === "p1") {
+            const offer = await peer.createOffer();
+            console.log("Offer created:", offer);
+            await peer.setLocalDescription(offer);
+            socket.emit("sdp:send", { sdp: peer.localDescription });
+          }
+        } catch (err) {
+          console.error("Error during negotiation:", err);
         }
       };
 
-      connectedUser.onicecandidate = (event) => {
-        socket.emit("ice:send", { candidate: event.candidate, to: id });
+      peer.onicecandidate = (event) => {
+        if (event.candidate) {
+          console.log("Sending ICE candidate:", event.candidate);
+          socket.emit("ice:send", { candidate: event.candidate, to: id });
+        }
       };
 
-      connectedUser.ontrack = (event) => {
-        if (remoteVideoRef.current) {
+      peer.ontrack = (event) => {
+        console.log("Remote track received:", event);
+        if (event.streams && event.streams[0] && remoteVideoRef.current) {
           remoteVideoRef.current.srcObject = event.streams[0];
           remoteVideoRef.current.play();
+        } else {
+          console.error("No remote streams or video element not ready.");
         }
       };
+    };
 
-      // complete this
-    });
-
-    socket.on("sdp:reply", async ({ sdp }) => {
-      await peer.setRemoteDescription(new RTCSessionDescription(sdp));
-      if (type === "p2") {
-        const answer = await peer.createAnswer();
-        await peer.setLocalDescription(answer);
-        socket.emit("sdp:send", { sdp: peer.localDescription });
-      }
-    });
-
-    socket.on("ice:reply", async ({ candidate }) => {
-      await peer.addIceCandidate(candidate);
-    });
-
-    socket.on("room-id", (id) => {
-      setRoomId(id);
-    });
-
-    socket.on("get-message", (input) => {
-      setMessages((prev) => [...prev, { sender: "Stranger", text: input }]);
-    });
-
-    return () => socket.disconnect();
-  }, [type, peer]);
-
-  //Start audio and video capturing
-  function startMediaCapture(newPeer) {
-    navigator.mediaDevices
-      .getUserMedia({ audio: true, video: true })
-      .then((stream) => {
-        if (localVideoRef.current) {
-          localVideoRef.current.srcObject = stream;
+    const handleSdpReply = async ({ sdp }) => {
+      try {
+        const peer = peerRef.current;
+        if (!peer) return;
+        console.log("SDP received:", sdp);
+        await peer.setRemoteDescription(new RTCSessionDescription(sdp));
+        if (type === "p2") {
+          const answer = await peer.createAnswer();
+          console.log("Answer created:", answer);
+          await peer.setLocalDescription(answer);
+          socket.emit("sdp:send", { sdp: peer.localDescription });
         }
+      } catch (err) {
+        console.error("Error handling SDP reply:", err);
+      }
+    };
 
-        stream.getTracks().forEach((track) => newPeer.addTrack(track, stream));
-      })
-      .catch((err) => console.log(err));
-  }
+    const handleIceReply = async ({ candidate }) => {
+      try {
+        const peer = peerRef.current;
+        if (!peer) return;
+        console.log("Received ICE candidate:", candidate);
+        await peer.addIceCandidate(candidate);
+      } catch (err) {
+        console.error("Error adding ICE candidate:", err);
+      }
+    };
 
-  // Function to send messages
-  function handleSendMessage() {
-    const inputValue = inputRef.current.value;
-    if (!inputValue) {
-      return;
+    const handleRoomId = (id) => {
+      setRoomid(id);
+    };
+
+    const handleMessage = (input) => {
+      console.log("Message received on client:", input);
+      setMessages((prev) => [...prev, { sender: "Stranger", text: input }]);
+    };
+
+    socket.on("disconnected", handleDisconnected);
+    socket.emit("start", handleStart);
+    socket.on("remote-socket", handleRemoteSocket);
+    socket.on("sdp:reply", handleSdpReply);
+    socket.on("ice:reply", handleIceReply);
+    socket.on("roomid", handleRoomId);
+    socket.on("get-message", handleMessage);
+
+    return () => {
+      socket.off("disconnected", handleDisconnected);
+      socket.off("remote-socket", handleRemoteSocket);
+      socket.off("sdp:reply", handleSdpReply);
+      socket.off("ice:reply", handleIceReply);
+      socket.off("roomid", handleRoomId);
+      socket.off("get-message", handleMessage);
+      socket.disconnect();
+    };
+  }, [type]);
+
+  const startMediaCapture = async (peer) => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: true,
+        audio: true,
+      });
+
+      // peer.addStream(stream);
+
+      if (localVideoRef.current) {
+        localVideoRef.current.srcObject = stream;
+        localVideoRef.current.play();
+      }
+
+      stream.getTracks().forEach((track) => {
+        console.log("Adding track to peer connection:", track);
+        peer.addTrack(track, stream);
+      });
+    } catch (err) {
+      console.error("Error capturing media:", err);
     }
+  };
 
-    localSocket.on("send-message", inputValue, type, roomId);
-    setMessages((prev) => [...prev, { sender: "You", text: inputValue }]);
+  const handleSendMessage = () => {
+    const inputValue = inputRef.current.value;
+    if (!inputValue) return;
+
+    localSocket.emit("send-message", inputValue, type, roomid);
+    // setMessages((prev) => [...prev, { sender: "You", text: inputValue }]);
     inputRef.current.value = "";
-  }
+  };
 
   return (
     <>
@@ -114,13 +175,11 @@ export default function Home() {
           <div className="flex flex-col p-4">
             <div className="flex-grow">
               {messages.map((msg, idx) => (
-                <>
-                  <div key={idx + 1}>
-                    <p>
-                      {msg.sender}: <span>{msg.text}</span>
-                    </p>
-                  </div>
-                </>
+                <div key={idx}>
+                  <p>
+                    {msg.sender}: <span>{msg.text}</span>
+                  </p>
+                </div>
               ))}
             </div>
             <div className="flex justify-center">
@@ -128,8 +187,6 @@ export default function Home() {
                 <input
                   type="text"
                   ref={inputRef}
-                  name=""
-                  id=""
                   placeholder="Write in a message!"
                   className="outline-none w-72 text-lg tracking-wide"
                 />
@@ -139,17 +196,17 @@ export default function Home() {
               </div>
             </div>
           </div>
-          <div className="grid grid-cols-1 gap-6 mx-auto p-4">
+          <div className="flex justify-center ">
             <video
               ref={remoteVideoRef}
               autoPlay
-              className="bg-black/20 h-full rounded-2xl"
+              className="rounded-2xl p-4 h-fit"
             ></video>
             <video
               ref={localVideoRef}
               muted
               autoPlay
-              className="bg-black/50 h-full rounded-2xl"
+              className="absolute bottom-0 bg-black/50 rounded-2xl h-40"
             ></video>
           </div>
         </section>

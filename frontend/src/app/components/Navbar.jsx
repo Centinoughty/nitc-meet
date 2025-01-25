@@ -25,7 +25,7 @@ export default function Navbar() {
 
   return (
     <>
-      <nav className="p-4 bg-primary fixed w-screen">
+      <nav className="p-4 bg-primary absolute w-full">
         <div className="relative flex items-center justify-between">
           <Link href="/" className="flex items-center gap-2">
             <img src="/centinoughty.png" alt="" className="h-10 rounded-full" />
