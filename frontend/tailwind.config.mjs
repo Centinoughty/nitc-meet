@@ -6,7 +6,16 @@ export default {
     "./src/app/**/*.{js,ts,jsx,tsx,mdx}",
   ],
   theme: {
-    extend: {},
+    extend: {
+      colors: {
+        primary: "#e0f5d0",
+        secondary: "#6ef50b",
+      },
+      fontFamily: {
+        poppins: ["Poppins", "serif"],
+        roboto: ["Roboto", "serif"],
+      },
+    },
   },
   plugins: [],
 };
