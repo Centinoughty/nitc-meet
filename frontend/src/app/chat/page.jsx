@@ -36,14 +36,7 @@ export default function Home() {
       setIsWaiting(false);
 
       const peer = new RTCPeerConnection({
-        iceServers: [
-          { urls: "stun:stun.l.google.com:19302" }, // Public STUN server by Google
-          // {
-          //   urls: "turn:your-turn-server.com:3478", // Replace with your TURN server
-          //   username: "your-username",
-          //   credential: "your-password",
-          // },
-        ],
+        iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
       });
       peerRef.current = peer;
 
