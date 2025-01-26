@@ -5,7 +5,7 @@ const userSchema = new mongoose.Schema({
     type: String,
     required: true,
     unique: true,
-    match: /@nitc\.ac\.in$/, 
+    match: /@nitc\.ac\.in$/,
   },
   name: { type: String, required: true },
   profilePic: { type: String }, // Optional: URL of the student's profile picture
