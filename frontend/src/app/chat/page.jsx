@@ -107,7 +107,17 @@ export default function Home() {
 
     const handleMessage = (input) => {
       console.log("Message received on client:", input);
-      setMessages((prev) => [...prev, { sender: "Stranger", text: input }]);
+      setMessages((prev) => {
+        if (
+          !prev.some((msg) => msg.text === input && msg.sender === "Stranger")
+        ) {
+          return [
+            ...prev,
+            { sender: type === "Stranger" ? "Stranger" : "You", text: input },
+          ];
+        }
+        return prev;
+      });
     };
 
     socket.on("disconnected", handleDisconnected);
@@ -156,8 +166,16 @@ export default function Home() {
     const inputValue = inputRef.current.value;
     if (!inputValue) return;
 
-    localSocket.emit("send-message", inputValue, type, roomid);
+    // Only emit the message if it's not already in the message list
+    if (
+      !messages.some((msg) => msg.text === inputValue && msg.sender === "You")
+    ) {
+      localSocket.emit("send-message", inputValue, type, roomid);
+    }
+
+    // Update the state immediately with the message being sent
     // setMessages((prev) => [...prev, { sender: "You", text: inputValue }]);
+
     inputRef.current.value = "";
   };
 
