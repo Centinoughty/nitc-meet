@@ -63,48 +63,34 @@ io.on("connection", (socket) => {
     }
   });
 
-  socket.on("send-message", (input, type, roomId) => {
-    console.log("Message received:", { input, type, roomId });
-    io.to(roomId).emit("get-message", input);
+  socket.on("send-message", ({ text, sender, roomid }) => {
+    console.log("Message received:", { text, sender, roomid });
+    
+    // Broadcast the message to the other participant in the room with the sender's name
+    io.to(roomid).emit("get-message", { text, sender });
   });
+  
+
+
 });
 
-// Handle starting a new session
 const handleStart = (roomArr, socket, cb, io) => {
-  const closeRoom = (roomid, socketId) => {
-    for (const room of roomArr) {
-      if (room.roomid === roomid) {
-        room.isAvailable = false;
-        room.p2.id = socketId;
-        break;
-      }
-    }
-  };
-
   const checkAvailableRoom = (socketId) => {
     for (const room of roomArr) {
-      if (room.isAvailable) {
-        return { is: true, roomid: room.roomid, room };
-      }
-      if (room.p1.id === socketId || room.p2.id === socketId) {
+      // If room is available or this socket is already in this room
+      if (room.isAvailable || 
+          room.p1.id === socketId || 
+          room.p2.id === socketId) {
         return { is: false, roomid: "", room: null };
       }
     }
-    return { is: false, roomid: "", room: null };
+    return { is: true, roomid: "", room: null };
   };
 
   const availableRoom = checkAvailableRoom(socket.id);
+  
   if (availableRoom.is) {
-    socket.join(availableRoom.roomid);
-    cb("p2");
-    closeRoom(availableRoom.roomid, socket.id);
-
-    if (availableRoom.room) {
-      io.to(availableRoom.room.p1.id).emit("remote-socket", socket.id);
-      socket.emit("remote-socket", availableRoom.room.p1.id);
-      socket.emit("roomid", availableRoom.room.roomid);
-    }
-  } else {
+    // Create a new room for this socket
     const roomid = uuidv4();
     socket.join(roomid);
     roomArr.push({
@@ -115,6 +101,35 @@ const handleStart = (roomArr, socket, cb, io) => {
     });
     cb("p1");
     socket.emit("roomid", roomid);
+  } else {
+    // Find an available room to join
+    const availableExistingRoom = roomArr.find(room => room.isAvailable);
+    
+    if (availableExistingRoom) {
+      socket.join(availableExistingRoom.roomid);
+      cb("p2");
+      
+      // Close the room
+      availableExistingRoom.isAvailable = false;
+      availableExistingRoom.p2.id = socket.id;
+
+      // Notify both participants
+      io.to(availableExistingRoom.p1.id).emit("remote-socket", socket.id);
+      socket.emit("remote-socket", availableExistingRoom.p1.id);
+      socket.emit("roomid", availableExistingRoom.roomid);
+    } else {
+      // If no rooms are available, create a new one
+      const roomid = uuidv4();
+      socket.join(roomid);
+      roomArr.push({
+        roomid,
+        isAvailable: true,
+        p1: { id: socket.id },
+        p2: { id: null },
+      });
+      cb("p1");
+      socket.emit("roomid", roomid);
+    }
   }
 };
 

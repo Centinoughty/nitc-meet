@@ -19,12 +19,13 @@ export default function Home() {
 
   useEffect(() => {
     const socket = io(process.env.NEXT_PUBLIC_BACKEND, {
-      transports: ["websocket"], // Ensure WebSocket transport is used
+      transports: ["websocket"],
     });
     setLocalSocket(socket);
 
     const handleDisconnected = () => {
       console.log("Disconnected");
+      cleanupMediaAndPeer();
     };
 
     const handleStart = (person) => {
@@ -37,10 +38,11 @@ export default function Home() {
 
       const peer = new RTCPeerConnection({
         iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+        iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
       });
       peerRef.current = peer;
 
-      await startMediaCapture(peer); // Ensure media capture starts before negotiation
+      await startMediaCapture(peer);
 
       peer.onnegotiationneeded = async () => {
         try {
@@ -64,13 +66,23 @@ export default function Home() {
 
       peer.ontrack = (event) => {
         console.log("Remote track received:", event);
+        
+        // Ensure the stream and video element are available before assigning the source
         if (event.streams && event.streams[0] && remoteVideoRef.current) {
-          remoteVideoRef.current.srcObject = event.streams[0];
-          remoteVideoRef.current.play();
+          // Set the video source only if it's not already set
+          if (remoteVideoRef.current.srcObject !== event.streams[0]) {
+            remoteVideoRef.current.srcObject = event.streams[0];
+          }
+      
+          // Add event listener to ensure the video plays only when it is ready
+          remoteVideoRef.current.oncanplay = () => {
+            remoteVideoRef.current.play().catch((err) => console.error("Error playing remote video:", err));
+          };
         } else {
           console.error("No remote streams or video element not ready.");
         }
       };
+      
     };
 
     const handleSdpReply = async ({ sdp }) => {
@@ -101,13 +113,11 @@ export default function Home() {
       }
     };
 
-    const handleRoomId = (id) => {
-      setRoomid(id);
-    };
-
     const handleMessage = (input) => {
       console.log("Message received on client:", input);
-      setMessages((prev) => [...prev, { sender: "Stranger", text: input }]);
+      if (input.sender !== type.p1id) {
+        setMessages((prev) => [...prev, { sender: "Stranger", text: input.text }]);
+      }
     };
 
     socket.on("disconnected", handleDisconnected);
@@ -115,15 +125,15 @@ export default function Home() {
     socket.on("remote-socket", handleRemoteSocket);
     socket.on("sdp:reply", handleSdpReply);
     socket.on("ice:reply", handleIceReply);
-    socket.on("roomid", handleRoomId);
-    socket.on("get-message", handleMessage);
+    socket.on("roomid", (id) => setRoomid(id));
+    socket.on("get-message", handleMessage);  // This is where the error occurred
 
     return () => {
       socket.off("disconnected", handleDisconnected);
       socket.off("remote-socket", handleRemoteSocket);
       socket.off("sdp:reply", handleSdpReply);
       socket.off("ice:reply", handleIceReply);
-      socket.off("roomid", handleRoomId);
+      socket.off("roomid", (id) => setRoomid(id));
       socket.off("get-message", handleMessage);
       socket.disconnect();
     };
@@ -135,75 +145,120 @@ export default function Home() {
         video: true,
         audio: true,
       });
-
-      // peer.addStream(stream);
-
+  
+      if (peer.signalingState === "closed") {
+        console.log("Peer connection is closed. Cannot add tracks.");
+        return;
+      }
+  
       if (localVideoRef.current) {
         localVideoRef.current.srcObject = stream;
-        localVideoRef.current.play();
+        
+        // Wait for the video element to be ready to play
+        localVideoRef.current.onloadedmetadata = () => {
+          try {
+            localVideoRef.current.play().catch((err) => {
+              console.log("Error playing local video:", err);
+            });
+          } catch (err) {
+            console.log("Error playing local video:", err);
+          }
+        };
       }
-
+  
+      // Add tracks only if peer connection is open
       stream.getTracks().forEach((track) => {
-        console.log("Adding track to peer connection:", track);
-        peer.addTrack(track, stream);
+        if (peer.signalingState !== "closed") {
+          console.log("Adding track to peer connection:", track);
+          peer.addTrack(track, stream);
+        } else {
+          console.log("Peer connection is closed, cannot add track.");
+        }
       });
     } catch (err) {
-      console.error("Error capturing media:", err);
+      console.log("Error capturing media:", err);
     }
   };
-
+  
   const handleSendMessage = () => {
     const inputValue = inputRef.current.value;
     if (!inputValue) return;
-
-    localSocket.emit("send-message", inputValue, type, roomid);
-    // setMessages((prev) => [...prev, { sender: "You", text: inputValue }]);
+  
+    localSocket.emit("send-message", { text: inputValue, sender: "You", roomid });
+    setMessages((prev) => [...prev, { sender: "You", text: inputValue }]);
     inputRef.current.value = "";
   };
+  
+  const handleEndCall = () => {
+    localSocket.emit("end-call", { roomid });
+    cleanupMediaAndPeer();
+    window.location.href = "/";
+  };
+  
+  const cleanupMediaAndPeer = () => {
+    const stream = localVideoRef.current?.srcObject;
+    if (stream) {
+      stream.getTracks().forEach((track) => track.stop());
+    }
+    if (peerRef.current) {
+      peerRef.current.close();
+    }
+    if (localVideoRef.current) {
+      localVideoRef.current.srcObject = null;
+    }
+    if (remoteVideoRef.current) {
+      remoteVideoRef.current.srcObject = null;
+    }
+  };
+  
 
-  return (
-    <>
-      <main>
-        <section className="pt-[73px] grid grid-cols-2 h-screen">
-          <div className="flex flex-col p-4">
-            <div className="flex-grow">
-              {messages.map((msg, idx) => (
-                <div key={idx}>
-                  <p>
-                    {msg.sender}: <span>{msg.text}</span>
-                  </p>
-                </div>
-              ))}
+ return (
+  <main>
+    <section className="pt-[73px] grid grid-cols-2 h-screen">
+      <div className="flex flex-col p-4">
+        <div className="flex-grow">
+          {messages.map((msg, idx) => (
+            <div key={idx}>
+              <p>{msg.sender}: <span>{msg.text}</span></p>
             </div>
-            <div className="flex justify-center">
-              <div className="border-2 border-gray-500/50 px-3 py-2 rounded-full flex items-center">
-                <input
-                  type="text"
-                  ref={inputRef}
-                  placeholder="Write in a message!"
-                  className="outline-none w-72 text-lg tracking-wide"
-                />
-                <button onClick={handleSendMessage} className="rotate-12">
-                  <FiSend size={24} />
-                </button>
-              </div>
-            </div>
+          ))}
+        </div>
+        <div className="flex justify-center gap-6">
+          <div className="border-2 border-gray-500/50 px-3 py-2 rounded-full flex items-center">
+            <input
+              type="text"
+              ref={inputRef}
+              placeholder="Write a message!"
+              className="outline-none w-72 text-lg tracking-wide"
+            />
+            <button onClick={handleSendMessage} className="rotate-12">
+              <FiSend size={24} />
+            </button>
           </div>
-          <div className="flex justify-center ">
-            <video
-              ref={remoteVideoRef}
-              autoPlay
-              className="rounded-2xl p-4 h-fit"
-            ></video>
-            <video
-              ref={localVideoRef}
-              muted
-              autoPlay
-              className="absolute bottom-0 bg-black/50 rounded-2xl h-40"
-            ></video>
-          </div>
-        </section>
-      </main>
-    </>
-  );
+          <button
+            onClick={handleEndCall}
+            className="bg-red-500 text-white px-3 py-2 rounded-full mt-2"
+          >
+            End Call
+          </button>
+        </div>
+      </div>
+      <div className="flex justify-center items-center relative overflow-hidden">
+        {/* Remote video */}
+        <video
+          ref={remoteVideoRef}
+          autoPlay
+          className="w-full h-full object-cover rounded-3xl px-3 py-2" // Full screen and maintaining aspect ratio
+        />
+        {/* Local video */}
+        <video
+          ref={localVideoRef}
+          muted
+          autoPlay
+          className="absolute bottom-4 left-4 w-40 h-40 bg-black/50 rounded-2xl object-cover" // Fixed small size for the local video
+        />
+      </div>
+    </section>
+  </main>
+);
 }
