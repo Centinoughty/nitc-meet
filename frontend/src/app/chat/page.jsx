@@ -20,8 +20,10 @@ export default function Home() {
   useEffect(() => {
     const socket = io(process.env.NEXT_PUBLIC_BACKEND, {
       transports: ["websocket"],
+      autoConnect:true
     });
     setLocalSocket(socket);
+    console.log(localSocket)
 
     const handleDisconnected = () => {
       console.log("Disconnected");
@@ -37,8 +39,7 @@ export default function Home() {
       setIsWaiting(false);
 
       const peer = new RTCPeerConnection({
-        iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
-        iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+        iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
       });
       peerRef.current = peer;
 
@@ -66,14 +67,14 @@ export default function Home() {
 
       peer.ontrack = (event) => {
         console.log("Remote track received:", event);
-        
+
         // Ensure the stream and video element are available before assigning the source
         if (event.streams && event.streams[0] && remoteVideoRef.current) {
           // Set the video source only if it's not already set
           if (remoteVideoRef.current.srcObject !== event.streams[0]) {
             remoteVideoRef.current.srcObject = event.streams[0];
           }
-      
+
           // Add event listener to ensure the video plays only when it is ready
           remoteVideoRef.current.oncanplay = () => {
             remoteVideoRef.current.play().catch((err) => console.error("Error playing remote video:", err));
@@ -82,7 +83,7 @@ export default function Home() {
           console.error("No remote streams or video element not ready.");
         }
       };
-      
+
     };
 
     const handleSdpReply = async ({ sdp }) => {
@@ -115,10 +116,15 @@ export default function Home() {
 
     const handleMessage = (input) => {
       console.log("Message received on client:", input);
-      if (input.sender !== type.p1id) {
+      console.log(socket)
+      
+      // Check if the message is from another user
+      if (input.sender !== socket.id) {
+        console.log("bro")
         setMessages((prev) => [...prev, { sender: "Stranger", text: input.text }]);
       }
     };
+    
 
     socket.on("disconnected", handleDisconnected);
     socket.emit("start", handleStart);
@@ -145,27 +151,24 @@ export default function Home() {
         video: true,
         audio: true,
       });
-  
+
       if (peer.signalingState === "closed") {
         console.log("Peer connection is closed. Cannot add tracks.");
         return;
       }
-  
+
       if (localVideoRef.current) {
         localVideoRef.current.srcObject = stream;
-        
+
         // Wait for the video element to be ready to play
         localVideoRef.current.onloadedmetadata = () => {
-          try {
-            localVideoRef.current.play().catch((err) => {
-              console.log("Error playing local video:", err);
-            });
-          } catch (err) {
-            console.log("Error playing local video:", err);
-          }
+          localVideoRef.current
+            .play()
+            .catch((err) => console.error("Error playing local video:", err));
         };
+
       }
-  
+
       // Add tracks only if peer connection is open
       stream.getTracks().forEach((track) => {
         if (peer.signalingState !== "closed") {
@@ -179,22 +182,42 @@ export default function Home() {
       console.log("Error capturing media:", err);
     }
   };
-  
+
   const handleSendMessage = () => {
     const inputValue = inputRef.current.value;
     if (!inputValue) return;
-  
+
     localSocket.emit("send-message", { text: inputValue, sender: "You", roomid });
     setMessages((prev) => [...prev, { sender: "You", text: inputValue }]);
     inputRef.current.value = "";
   };
-  
+
   const handleEndCall = () => {
     localSocket.emit("end-call", { roomid });
     cleanupMediaAndPeer();
     window.location.href = "/";
   };
-  
+
+  const handleSkip = () => {
+    if (localSocket && roomid) {
+      // Notify the server that the user wants to skip
+      localSocket.emit("end-call", { roomid });
+      localSocket.emit("start", (person) => {
+        setType(person); // Set the peer type (p1 or p2)
+      });
+    }
+
+    // Clean up media and peer connections
+    cleanupMediaAndPeer();
+
+    // Reset state to prepare for a new match
+    setIsWaiting(true);
+    setMessages([]);
+    setRemoteSocket(null);
+    setRoomid(null);
+  };
+
+
   const cleanupMediaAndPeer = () => {
     const stream = localVideoRef.current?.srcObject;
     if (stream) {
@@ -210,55 +233,62 @@ export default function Home() {
       remoteVideoRef.current.srcObject = null;
     }
   };
-  
 
- return (
-  <main>
-    <section className="pt-[73px] grid grid-cols-2 h-screen">
-      <div className="flex flex-col p-4">
-        <div className="flex-grow">
-          {messages.map((msg, idx) => (
-            <div key={idx}>
-              <p>{msg.sender}: <span>{msg.text}</span></p>
+
+  return (
+    <main>
+      <section className="pt-[73px] grid grid-cols-2 h-screen">
+        <div className="flex flex-col p-4">
+          <div className="flex-grow">
+            {messages.map((msg, idx) => (
+              <div key={idx}>
+                <p>{msg.sender}: <span>{msg.text}</span></p>
+              </div>
+            ))}
+          </div>
+          <div className="flex justify-center gap-6">
+            <div className="border-2 border-gray-500/50 px-3 py-2 rounded-full flex items-center">
+              <input
+                type="text"
+                ref={inputRef}
+                placeholder="Write a message!"
+                className="outline-none w-72 text-lg tracking-wide"
+              />
+              <button onClick={handleSendMessage} className="rotate-12">
+                <FiSend size={24} />
+              </button>
             </div>
-          ))}
-        </div>
-        <div className="flex justify-center gap-6">
-          <div className="border-2 border-gray-500/50 px-3 py-2 rounded-full flex items-center">
-            <input
-              type="text"
-              ref={inputRef}
-              placeholder="Write a message!"
-              className="outline-none w-72 text-lg tracking-wide"
-            />
-            <button onClick={handleSendMessage} className="rotate-12">
-              <FiSend size={24} />
+            <button
+              onClick={handleEndCall}
+              className="bg-red-500 text-white px-3 py-2 rounded-full mt-2"
+            >
+              End Call
+            </button>
+
+            <button
+              onClick={handleSkip}
+              className="bg-blue-500 text-white px-3 py-2 rounded-full mt-2"
+            >
+              Skip
             </button>
           </div>
-          <button
-            onClick={handleEndCall}
-            className="bg-red-500 text-white px-3 py-2 rounded-full mt-2"
-          >
-            End Call
-          </button>
         </div>
-      </div>
-      <div className="flex justify-center items-center relative overflow-hidden">
-        {/* Remote video */}
-        <video
-          ref={remoteVideoRef}
-          autoPlay
-          className="w-full h-full object-cover rounded-3xl px-3 py-2" // Full screen and maintaining aspect ratio
-        />
-        {/* Local video */}
-        <video
-          ref={localVideoRef}
-          muted
-          autoPlay
-          className="absolute bottom-4 left-4 w-40 h-40 bg-black/50 rounded-2xl object-cover" // Fixed small size for the local video
-        />
-      </div>
-    </section>
-  </main>
-);
+        <div className="flex justify-center items-center relative overflow-hidden">
+          {/* Remote video */}
+          <video
+            ref={remoteVideoRef}
+            autoPlay
+            className="w-full h-full object-cover rounded-3xl px-3 py-2" // Full screen and maintaining aspect ratio
+          />
+          {/* Local video */}
+          <video
+            ref={localVideoRef}
+            muted
+            autoPlay
+            className="absolute bottom-4 left-4 w-40 h-40 bg-black/50 rounded-2xl object-cover" // Fixed small size for the local video
+          />
+        </div>
+      </section>
+    </main>
+  );
 }

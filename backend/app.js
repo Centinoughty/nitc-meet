@@ -31,6 +31,7 @@ let roomArr = [];
 // When a user connects
 io.on("connection", (socket) => {
   online++;
+  console.log(online)
   io.emit("online", online); // Notify all clients of the current online count
 
   socket.on("start", (cb) => {
@@ -67,8 +68,19 @@ io.on("connection", (socket) => {
     console.log("Message received:", { text, sender, roomid });
     
     // Broadcast the message to the other participant in the room with the sender's name
-    io.to(roomid).emit("get-message", { text, sender });
+    io.to(roomid).emit("get-message", { text, sender: socket.id });
+
   });
+
+  socket.on("skip", () => {
+    handleSkip(socket.id, roomArr, io);
+  });
+
+  socket.on("end-call", () => {
+    handleEndCall(socket.id, roomArr, io);
+  });
+  
+  
   
 
 
@@ -153,6 +165,62 @@ const handleDisconnect = (disconnectedId, roomArr, io) => {
     }
   }
 };
+
+const handleEndCall = (socketId, roomArr, io) => {
+  for (let i = 0; i < roomArr.length; i++) {
+    const room = roomArr[i];
+
+    if (room.p1.id === socketId || room.p2.id === socketId) {
+      const otherId = room.p1.id === socketId ? room.p2.id : room.p1.id;
+
+      // Notify the other participant, if they exist
+      if (otherId) {
+        io.to(otherId).emit("call-ended");
+      }
+
+      // Remove the room from the list
+      roomArr.splice(i, 1);
+      break;
+    }
+  }
+};
+
+
+const handleSkip = (socketId, roomArr, io) => {
+  for (let i = 0; i < roomArr.length; i++) {
+    const room = roomArr[i];
+
+    // If the skipping user is in this room
+    if (room.p1.id === socketId || room.p2.id === socketId) {
+      const otherId = room.p1.id === socketId ? room.p2.id : room.p1.id;
+
+      // Notify the other participant, if they exist
+      if (otherId) {
+        io.to(otherId).emit("skipped");
+        room.isAvailable = true;
+
+        // Reassign the remaining participant as `p1` and reset `p2`
+        if (room.p1.id === socketId) {
+          room.p1.id = otherId;
+          room.p2.id = null;
+        } else {
+          room.p2.id = null;
+        }
+      } else {
+        // If the room is empty, remove it
+        roomArr.splice(i, 1);
+      }
+
+      // Start a new match for the skipping user
+      handleStart(roomArr, io.sockets.sockets.get(socketId), (peerType) => {
+        io.to(socketId).emit("peer-type", peerType);
+      });
+
+      break;
+    }
+  }
+};
+
 
 // Get the peer type for a user
 const getType = (id, roomArr) => {
