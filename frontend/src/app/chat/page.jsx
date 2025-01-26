@@ -236,6 +236,26 @@ export default function Home() {
     window.location.href = "/";
   };
 
+  const handleSkip = () => {
+    if (localSocket && roomid) {
+      // Notify the server that the user wants to skip
+      localSocket.emit("end-call", { roomid });
+      localSocket.emit("start", (person) => {
+        setType(person); // Set the peer type (p1 or p2)
+      });
+    }
+
+    // Clean up media and peer connections
+    cleanupMediaAndPeer();
+
+    // Reset state to prepare for a new match
+    setIsWaiting(true);
+    setMessages([]);
+    setRemoteSocket(null);
+    setRoomid(null);
+  };
+
+
   const cleanupMediaAndPeer = () => {
     const stream = localVideoRef.current?.srcObject;
     if (stream) {
@@ -286,7 +306,7 @@ export default function Home() {
               </button>
   
             <button
-              // onClick={handleSkip}
+              onClick={handleSkip}
               className="bg-blue-500 text-white px-3 py-2 rounded-full mt-2"
             >
               Skip
